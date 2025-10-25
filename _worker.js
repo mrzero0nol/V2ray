@@ -1,16 +1,207 @@
 import { connect } from "cloudflare:sockets";
 
+const HTML_CONTENT = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nautica Reforged</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Nautica Reforged</h1>
+        <p>A faster, more modern proxy tunnel.</p>
+    </header>
+    <main>
+        <div class="controls">
+            <input type="text" id="search" placeholder="Search by country or organization...">
+            <button id="get-proxies">Get Proxies</button>
+        </div>
+        <div id="proxy-list">
+            <!-- Proxy items will be dynamically inserted here -->
+        </div>
+    </main>
+    <script src="script.js"></script>
+</body>
+</html>`;
+
+const CSS_CONTENT = `@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
+
+:root {
+    --background-color: #1a1a2e;
+    --primary-color: #16213e;
+    --secondary-color: #0f3460;
+    --accent-color: #e94560;
+    --text-color: #dcdcdc;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Roboto', sans-serif;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    line-height: 1.6;
+}
+
+header {
+    background: var(--primary-color);
+    padding: 2rem;
+    text-align: center;
+    border-bottom: 2px solid var(--accent-color);
+}
+
+header h1 {
+    font-size: 2.5rem;
+    margin-bottom: 0.5rem;
+}
+
+main {
+    padding: 2rem;
+}
+
+.controls {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 2rem;
+}
+
+#search {
+    width: 50%;
+    padding: 0.8rem;
+    border: 1px solid var(--secondary-color);
+    border-radius: 5px;
+    background: var(--primary-color);
+    color: var(--text-color);
+    font-size: 1rem;
+}
+
+#get-proxies {
+    padding: 0.8rem 1.5rem;
+    border: none;
+    background: var(--accent-color);
+    color: white;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 1rem;
+    margin-left: 1rem;
+    transition: background 0.3s ease;
+}
+
+#get-proxies:hover {
+    background: #d43d51;
+}
+
+#proxy-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
+}
+
+.proxy-item {
+    background: var(--primary-color);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border-left: 5px solid var(--accent-color);
+    transition: transform 0.3s ease;
+}
+
+.proxy-item:hover {
+    transform: translateY(-5px);
+}
+
+.proxy-item p {
+    margin-bottom: 0.5rem;
+}
+
+.proxy-item .country {
+    font-weight: bold;
+}
+`;
+
+const JS_CONTENT = `document.addEventListener('DOMContentLoaded', () => {
+    const getProxiesButton = document.getElementById('get-proxies');
+    const proxyListContainer = document.getElementById('proxy-list');
+    const searchInput = document.getElementById('search');
+
+    let allProxies = [];
+
+    const fetchProxies = async () => {
+        try {
+            const response = await fetch('/api/v1/sub');
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            const data = await response.text();
+            // This is a simplified parser. A more robust solution would be needed
+            // if the format is complex.
+            allProxies = data.split('\\n').map(line => {
+                try {
+                    const url = new URL(line);
+                    const hash = decodeURIComponent(url.hash.substring(1));
+                    return {
+                        url: line,
+                        display: hash,
+                    };
+                } catch (e) {
+                    return null;
+                }
+            }).filter(Boolean);
+
+            renderProxies(allProxies);
+        } catch (error) {
+            console.error('Failed to fetch proxies:', error);
+            proxyListContainer.innerHTML = '<p>Error loading proxies.</p>';
+        }
+    };
+
+    const renderProxies = (proxies) => {
+        proxyListContainer.innerHTML = '';
+        if (proxies.length === 0) {
+            proxyListContainer.innerHTML = '<p>No proxies found.</p>';
+            return;
+        }
+
+        proxies.forEach(proxy => {
+            const item = document.createElement('div');
+            item.className = 'proxy-item';
+            item.innerHTML = \`<p>\${proxy.display}</p>\`;
+            item.addEventListener('click', () => {
+                navigator.clipboard.writeText(proxy.url).then(() => {
+                    // Maybe show a notification
+                });
+            });
+            proxyListContainer.appendChild(item);
+        });
+    };
+
+    const filterProxies = () => {
+        const query = searchInput.value.toLowerCase();
+        const filtered = allProxies.filter(proxy =>
+            proxy.display.toLowerCase().includes(query)
+        );
+        renderProxies(filtered);
+    };
+
+    getProxiesButton.addEventListener('click', fetchProxies);
+    searchInput.addEventListener('input', filterProxies);
+});
+`;
+
 // Variables
 let serviceName = "";
 let APP_DOMAIN = "";
 
 let prxIP = "";
 
-// Cache variables
-let cachedPrxList = [];
-let cachedKVPrxList = {};
-let cacheTimestamp = 0;
-const CACHE_EXPIRY = 5 * 60 * 1000; // 5 minutes
+// Embedded Proxy Data
+const EMBEDDED_KV_PRX_LIST = {"AM":["2.56.204.183:443","213.159.76.175:443"],"AE":["152.32.181.246:44070","84.235.245.18:34501"]};
+const EMBEDDED_PRX_LIST = "152.32.181.246,44070,AE,UCLOUD INFORMATION TECHNOLOGY (HK) LIMITED\n84.235.245.18,34501,AE,Oracle Svenska AB";
 
 // Constant
 const horse = "dHJvamFu";
@@ -29,8 +220,6 @@ const RELAY_SERVER_UDP = {
   host: "udp-relay.hobihaus.space", // Kontribusi atau cek relay publik disini: https://hub.docker.com/r/kelvinzer0/udp-relay
   port: 7300,
 };
-const PRX_HEALTH_CHECK_API = "https://id1.foolvpn.me/api/v1/check";
-const CONVERTER_URL = "https://api.foolvpn.me/convert";
 const WS_READY_STATE_OPEN = 1;
 const WS_READY_STATE_CLOSING = 2;
 const CORS_HEADER_OPTIONS = {
@@ -39,56 +228,101 @@ const CORS_HEADER_OPTIONS = {
   "Access-Control-Max-Age": "86400",
 };
 
-async function getKVPrxList(kvPrxUrl = KV_PRX_URL) {
-  const now = Date.now();
-  if (now - cacheTimestamp < CACHE_EXPIRY && Object.keys(cachedKVPrxList).length > 0) {
-    return cachedKVPrxList;
-  }
-
-  if (!kvPrxUrl) {
-    throw new Error("No URL Provided!");
-  }
-
-  const kvPrx = await fetch(kvPrxUrl);
-  if (kvPrx.status == 200) {
-    cachedKVPrxList = await kvPrx.json();
-    cacheTimestamp = now;
-    return cachedKVPrxList;
-  } else {
-    return {};
-  }
+async function getKVPrxList() {
+  return EMBEDDED_KV_PRX_LIST;
 }
 
-async function getPrxList(prxBankUrl = PRX_BANK_URL) {
-  const now = Date.now();
-  if (now - cacheTimestamp < CACHE_EXPIRY && cachedPrxList.length > 0) {
-    return cachedPrxList;
-  }
+async function getPrxList() {
+  const prxString = EMBEDDED_PRX_LIST.split("\n").filter(Boolean);
+  return prxString
+    .map((entry) => {
+      const [prxIP, prxPort, country, org] = entry.split(",");
+      return {
+        prxIP: prxIP || "Unknown",
+        prxPort: prxPort || "Unknown",
+        country: country || "Unknown",
+        org: org || "Unknown Org",
+      };
+    })
+    .filter(Boolean);
+}
 
-  if (!prxBankUrl) {
-    throw new Error("No URL Provided!");
-  }
+function convertToClash(urls) {
+  const proxies = [];
+  for (const url of urls) {
+    try {
+      const u = new URL(url);
+      const proxy = {};
+      proxy.name = decodeURIComponent(u.hash.substring(1));
+      proxy.server = u.hostname;
+      proxy.port = u.port;
+      proxy.type = u.protocol.slice(0, -1);
 
-  const prxBank = await fetch(prxBankUrl);
-  if (prxBank.status == 200) {
-    const text = (await prxBank.text()) || "";
-
-    const prxString = text.split("\n").filter(Boolean);
-    cachedPrxList = prxString
-      .map((entry) => {
-        const [prxIP, prxPort, country, org] = entry.split(",");
-        return {
-          prxIP: prxIP || "Unknown",
-          prxPort: prxPort || "Unknown",
-          country: country || "Unknown",
-          org: org || "Unknown Org",
+      if (proxy.type === 'vless' || proxy.type === 'trojan') {
+        proxy.uuid = u.username;
+        proxy.network = u.searchParams.get('type');
+        proxy.ws_opts = {
+          path: u.searchParams.get('path'),
+          headers: {
+            Host: u.searchParams.get('host')
+          }
         };
-      })
-      .filter(Boolean);
-    cacheTimestamp = now;
+        if (u.searchParams.get('security') === 'tls') {
+          proxy.tls = true;
+          proxy.servername = u.searchParams.get('sni');
+        }
+      } else if (proxy.type === 'ss') {
+        const userInfo = atob(u.username).split(':');
+        proxy.cipher = userInfo[0];
+        proxy.password = userInfo[1];
+      }
+
+      proxies.push(proxy);
+    } catch (e) {
+      // Ignore invalid URLs
+    }
   }
 
-  return cachedPrxList;
+  const clashConfig = {
+    "mixed-port": 7890,
+    "allow-lan": false,
+    "mode": "rule",
+    "log-level": "info",
+    "external-controller": "127.0.0.1:9090",
+    "proxies": proxies,
+    "proxy-groups": [
+      {
+        "name": "PROXY",
+        "type": "select",
+        "proxies": proxies.map(p => p.name)
+      }
+    ],
+    "rules": [
+      "DOMAIN-SUFFIX,google.com,PROXY",
+      "DOMAIN-KEYWORD,google,PROXY",
+      "MATCH,DIRECT"
+    ]
+  };
+
+  // A simple YAML serializer
+  let yaml = '';
+  for (const key in clashConfig) {
+    if (key === 'proxies' || key === 'proxy-groups') {
+      yaml += `${key}:\n`;
+      for (const item of clashConfig[key]) {
+        yaml += `  - ${JSON.stringify(item)}\n`;
+      }
+    } else if (key === 'rules') {
+      yaml += `rules:\n`;
+      for (const rule of clashConfig[key]) {
+        yaml += `  - ${rule}\n`;
+      }
+    } else {
+      yaml += `${key}: ${JSON.stringify(clashConfig[key])}\n`;
+    }
+  }
+
+  return yaml;
 }
 
 export default {
@@ -97,6 +331,16 @@ export default {
       const url = new URL(request.url);
       APP_DOMAIN = url.hostname;
       serviceName = APP_DOMAIN.split(".")[0];
+
+      if (url.pathname === '/') {
+        return new Response(HTML_CONTENT, { headers: { 'Content-Type': 'text/html' } });
+      }
+      if (url.pathname === '/style.css') {
+        return new Response(CSS_CONTENT, { headers: { 'Content-Type': 'text/css' } });
+      }
+      if (url.pathname === '/script.js') {
+        return new Response(JS_CONTENT, { headers: { 'Content-Type': 'application/javascript' } });
+      }
 
       const upgradeHeader = request.headers.get("Upgrade");
 
@@ -121,7 +365,7 @@ export default {
 
       if (url.pathname.startsWith("/check")) {
         const target = url.searchParams.get("target").split(":");
-        const result = await checkPrxHealth(target[0], target[1] || "443");
+        const result = await checkProxyHealth(target[0], target[1] || "443");
 
         return new Response(JSON.stringify(result), {
           status: 200,
@@ -202,27 +446,8 @@ export default {
             case atob(v2):
               finalResult = btoa(result.join("\n"));
               break;
-            case atob(neko):
-            case "sfa":
-            case "bfr":
-              const res = await fetch(CONVERTER_URL, {
-                method: "POST",
-                body: JSON.stringify({
-                  url: result.join(","),
-                  format: filterFormat,
-                  template: "cf",
-                }),
-              });
-              if (res.status == 200) {
-                finalResult = await res.text();
-              } else {
-                return new Response(res.statusText, {
-                  status: res.status,
-                  headers: {
-                    ...CORS_HEADER_OPTIONS,
-                  },
-                });
-              }
+            case atob(neko): // clash
+              finalResult = convertToClash(result);
               break;
           }
 
@@ -251,8 +476,7 @@ export default {
         }
       }
 
-      // By not returning a response here, we allow the request to fall through
-      // to the static asset handler in wrangler.toml.
+      return new Response("Not Found", { status: 404 });
     } catch (err) {
       return new Response(`An error occurred: ${err.toString()}`, {
         status: 500,
@@ -777,9 +1001,24 @@ function safeCloseWebSocket(socket) {
   }
 }
 
-async function checkPrxHealth(prxIP, prxPort) {
-  const req = await fetch(`${PRX_HEALTH_CHECK_API}?ip=${prxIP}:${prxPort}`);
-  return await req.json();
+async function checkProxyHealth(ip, port) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 seconds timeout
+
+  try {
+    const response = await fetch(`http://${ip}:${port}`, {
+      signal: controller.signal,
+      method: 'HEAD' // Use HEAD request to be lightweight
+    });
+    clearTimeout(timeoutId);
+    return { "status": "ok", "latency": "N/A" };
+  } catch (e) {
+    clearTimeout(timeoutId);
+    if (e.name === 'AbortError') {
+      return { "status": "bad", "error": "timeout" };
+    }
+    return { "status": "bad", "error": e.message };
+  }
 }
 
 // Helpers
