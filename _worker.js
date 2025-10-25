@@ -170,7 +170,7 @@ const JS_CONTENT = `document.addEventListener('DOMContentLoaded', () => {
         proxies.forEach(proxy => {
             const item = document.createElement('div');
             item.className = 'proxy-item';
-            item.innerHTML = \`<p>\${proxy.display}</p>\`;
+            item.innerHTML = `<p>\${proxy.display}</p>`;
             item.addEventListener('click', () => {
                 navigator.clipboard.writeText(proxy.url).then(() => {
                     // Maybe show a notification
